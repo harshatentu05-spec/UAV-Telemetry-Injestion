@@ -3,3 +3,7 @@ pydantic
 databases[postgresql]
 asyncpg
 uvicorn
+fastapi
+uvicorn
+psycopg2-binary
+pika

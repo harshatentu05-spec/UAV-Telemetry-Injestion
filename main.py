@@ -1,84 +1,128 @@
-from fastapi import FastAPI
-from pydantic import BaseModel
+from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel, Field
+from typing import List
 from databases import Database
+import pika
+import json
+import time
 
-# 1. Database Connection String (Points to your live Docker container box)
-# Format: postgresql://username:password@hostname:port/database_name
 DATABASE_URL = "postgresql://postgres:alphaflight7@drone-postgres:5432/postgres"
-
-# Initialize the Database abstraction manager
 database = Database(DATABASE_URL)
 
-# 2. Initialize the FastAPI web server core engine
-app = FastAPI()
+app = FastAPI(title="UAV Aviation Telemetry Pipeline")
 
-# 3. Define the strict Data Validation Schema matching incoming drone payloads
+# --- PRODUCTION GRADE AVIATION SCHEMAS ---
+class FlightDynamics(BaseModel):
+    altitude_meters: float = Field(..., example=450.25)
+    airspeed_knots: float = Field(..., example=120.5)
+    heading_degrees: float = Field(..., ge=0, le=360, example=184.2)
+    pitch_roll_yaw: List[float] = Field(..., min_items=3, max_items=3, example=[1.2, -0.4, 184.2])
+
+class BatteryState(BaseModel):
+    voltage: float = Field(..., example=22.1)
+    current_draw_amps: float = Field(..., example=45.8)
+    capacity_remaining_percent: float = Field(..., ge=0, le=100, example=74.5)
+    core_temperature_celsius: float = Field(..., example=38.5)
+
+class PropulsionSystems(BaseModel):
+    motor_rpm: List[int] = Field(..., min_items=4, max_items=4, example=[8200, 8150, 8210, 8190])
+    battery_state: BatteryState
+
+class GPSCoordinates(BaseModel):
+    latitude: float = Field(..., example=12.8231)
+    longitude: float = Field(..., example=80.0442)
+
+class ThreatMatrix(BaseModel):
+    proximity_alert: bool = Field(..., example=False)
+    threat_type: str = Field(..., example="NONE") 
+
+class TacticalSensors(BaseModel):
+    gps: GPSCoordinates
+    airframe_g_force: float = Field(..., example=1.02)
+    obstacle_closure_rate_mps: float = Field(..., example=0.0)
+    threat_matrix: ThreatMatrix
+
 class TelemetryPacket(BaseModel):
-    drone_id: str
-    latitude: float
-    longitude: float
-    altitude_meters: float
-    battery_percentage: float
+    drone_id: str = Field(..., example="UAV-NX-704")
+    timestamp: int = Field(default_factory=lambda: int(time.time()))
+    flight_dynamics: FlightDynamics
+    propulsion_systems: PropulsionSystems
+    tactical_sensors: TacticalSensors
 
-# 4. Lifecycle Hooks: Automate secure database network tunnels
+# --- INFRASTRUCTURE STARTUP & SHUTDOWN LIFECYCLES ---
 @app.on_event("startup")
 async def startup():
     print("🔌 Booting system infrastructure... Opening Database Connection Pool.")
     await database.connect()
     
-    # Automatically execute a structural SQL query to generate our flight log schema table if missing
+    # Upgraded table schema using JSONB for complex nested metrics
     query = """
-    CREATE TABLE IF NOT EXISTS drone_logs (
+    CREATE TABLE IF NOT EXISTS drone_telemetry_records (
         id SERIAL PRIMARY KEY,
         drone_id VARCHAR(50) NOT NULL,
-        latitude TEXT NOT NULL,
-        longitude TEXT NOT NULL,
-        altitude_meters REAL NOT NULL,
-        battery_percentage REAL NOT NULL,
-        timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        timestamp bigint NOT NULL,
+        flight_dynamics JSONB NOT NULL,
+        propulsion_systems JSONB NOT NULL,
+        tactical_sensors JSONB NOT NULL,
+        processed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     );
     """
     await database.execute(query=query)
-    print("✅ System Infrastructure Active: Database Schema Table Verified.")
+    print("✅ System Infrastructure Active: Upgraded JSONB Schema Table Verified.")
 
 @app.on_event("shutdown")
 async def shutdown():
     print("🛑 System Shutdown Initiated: Closing Database Connection Pool safely.")
     await database.disconnect()
 
-# 5. Live Ingestion Ingress Endpoint Route
-@app.post("/drone-telemetry")
+# --- PIKA / RABBITMQ INFRASTRUCTURE HANDSHAKE ---
+def send_to_queue(payload: dict):
+    """
+    Establishes a connection handshake with RabbitMQ via pika and publishes the message.
+    """
+    try:
+        connection = pika.BlockingConnection(
+            pika.ConnectionParameters(host='rabbitmq')
+        )
+        channel = connection.channel()
+        channel.queue_declare(queue='uav_telemetry', durable=True)
+        
+        channel.basic_publish(
+            exchange='',
+            routing_key='uav_telemetry',
+            body=json.dumps(payload),
+            properties=pika.BasicProperties(
+                delivery_mode=2,  # Makes the message persistent on disk
+            )
+        )
+        connection.close()
+    except Exception as e:
+        print(f"🛑 Pipeline Critical Failure: Could not route message to RabbitMQ: {e}")
+        raise HTTPException(status_code=500, detail="Telemetry pipeline backpressure fault.")
+
+# --- INGESTION ENDPOINT ---
+@app.post("/drone-telemetry", status_code=202)
 async def process_live_telemetry(packet: TelemetryPacket):
     print(f"📡 Inbound Data Vector Intercepted from device: {packet.drone_id}")
     
-    # Prepare the relational SQL command string to permanently write data to hard disk blocks
-    query = """
-    INSERT INTO drone_logs (drone_id, latitude, longitude, altitude_meters, battery_percentage)
-    VALUES (:drone_id, :latitude, :longitude, :altitude_meters, :battery_percentage)
-    """
+    payload = packet.dict()
+    payload["processed_at_gateway"] = int(time.time())
     
-    # Bind variables to parameters safely to prevent database script injection attacks
-    values = {
-        "drone_id": packet.drone_id,
-        "latitude": str(packet.latitude),
-        "longitude": str(packet.longitude),
-        "altitude_meters": packet.altitude_meters,
-        "battery_percentage": packet.battery_percentage
-    }
+    send_to_queue(payload)
     
-    # Fire the query asynchronously over the asyncpg translator wire
-    await database.execute(query=query, values=values)
-    print(f"💾 Transaction Finalized: Packet payload written to non-volatile disk sectors.")
-    
-    # Core Safety Gate Evaluation
-    if packet.battery_percentage < 20.0:
+    if packet.propulsion_systems.battery_state.capacity_remaining_percent < 20.0:
         return {
             "status": "CRITICAL_ALERT",
             "action": "Triggering Automated Fail-Safe. Return to base hangar immediately!"
         }
+        
+    if packet.tactical_sensors.threat_matrix.proximity_alert:
+        return {
+            "status": "TACTICAL_EVASION",
+            "action": f"Threat detected: {packet.tactical_sensors.threat_matrix.threat_type}. Executing evasive vectors!"
+        }
     
     return {
-        "status": "NOMINAL",
-        "action": "Telemetry persistently logged to infrastructure database."
+        "status": "QUEUED",
+        "action": "Telemetry buffered safely to messaging pipeline."
     }
-
