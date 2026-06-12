@@ -23,6 +23,7 @@ services:
       - "8000:8000"
     environment:
       - RABBITMQ_HOST=rabbitmq
+      - PYTHONUNBUFFERED=1
     depends_on:
       - drone-postgres
       - rabbitmq
@@ -43,12 +44,13 @@ services:
   telemetry-worker:
     build: .
     container_name: telemetry_worker
-    command: python worker.py
+    command: python -u worker.py
     dns:
       - 8.8.8.8 # Gives the worker build instance stable internet access too
     environment:
       - RABBITMQ_HOST=rabbitmq
       - DATABASE_URL=postgresql://postgres:alphaflight7@drone-postgres:5432/postgres
+      - PYTHONUNBUFFERED=1
     depends_on:
       - rabbitmq
       - drone-postgres
