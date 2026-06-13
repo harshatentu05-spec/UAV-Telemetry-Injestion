@@ -115,6 +115,38 @@ async def shutdown():
     logger.info("System shutdown initiated — closing database connection pool")
     await database.disconnect()
 
+# --- SYSTEM MONITORING ---
+@app.get("/health", tags=["System Monitoring"])
+def health_check():
+    """
+    Heartbeat endpoint to verify API and message broker connectivity.
+    """
+    system_status = {
+        "api_status": "healthy",
+        "rabbitmq_connection": "unknown"
+    }
+
+    try:
+        # Attempt a short-lived connection to RabbitMQ
+        connection = pika.BlockingConnection(
+            pika.ConnectionParameters(host='rabbitmq')
+        )
+        
+        if connection.is_open:
+            system_status["rabbitmq_connection"] = "connected"
+            connection.close()  # Clean up immediately
+            
+    except pika.exceptions.AMQPConnectionError:
+        system_status["rabbitmq_connection"] = "disconnected"
+        # Return a 503 Service Unavailable if a critical dependency is down
+        raise HTTPException(status_code=503, detail=system_status)
+    except Exception as e:
+        system_status["rabbitmq_connection"] = f"error: {str(e)}"
+        raise HTTPException(status_code=500, detail=system_status)
+
+    # Return a 200 OK if everything is green
+    return system_status
+
 # --- PIKA / RABBITMQ INFRASTRUCTURE HANDSHAKE ---
 def send_to_queue(payload: dict):
     """
