@@ -6,7 +6,8 @@ from typing import List
 import pika
 import psycopg2
 from databases import Database
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from psycopg2.extras import RealDictCursor
@@ -23,6 +24,14 @@ DATABASE_URL = "postgresql://postgres:alphaflight7@drone-postgres:5432/postgres"
 database = Database(DATABASE_URL)
 
 app = FastAPI(title="UAV Aviation Telemetry Pipeline")
+# Allow React to talk to FastAPI
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 # --- GLOBAL EXCEPTION HANDLERS ---
 @app.exception_handler(RequestValidationError)
@@ -114,6 +123,38 @@ async def startup():
 async def shutdown():
     logger.info("System shutdown initiated — closing database connection pool")
     await database.disconnect()
+ 
+ # --- WEBSOCKET MANAGER ---
+class ConnectionManager:
+    def __init__(self):
+        self.active_connections: list[WebSocket] = []
+
+    async def connect(self, websocket: WebSocket):
+        await websocket.accept()
+        self.active_connections.append(websocket)
+
+    def disconnect(self, websocket: WebSocket):
+        self.active_connections.remove(websocket)
+
+    async def broadcast(self, message: dict):
+        # Sends the JSON payload to every connected Command Center
+        for connection in self.active_connections:
+            try:
+                await connection.send_json(message)
+            except RuntimeError:
+                pass # Ignore if the connection dropped mid-broadcast
+
+swarm_manager = ConnectionManager()
+# --- WEBSOCKET ROUTE (The missing door for React!) ---
+@app.websocket("/ws/telemetry")
+async def websocket_endpoint(websocket: WebSocket):
+    await swarm_manager.connect(websocket)
+    try:
+        while True:
+            # Keep the connection open indefinitely
+            await websocket.receive_text()
+    except WebSocketDisconnect:
+        swarm_manager.disconnect(websocket)
 
 # --- SYSTEM MONITORING ---
 @app.get("/health", tags=["System Monitoring"])
@@ -229,8 +270,13 @@ async def process_live_telemetry(packet: TelemetryPacket):
     payload = packet.dict()
     payload["processed_at_gateway"] = int(time.time())
 
+    # 1. Buffer to the messaging pipeline
     send_to_queue(payload)
 
+    # 2. Broadcast to Command Center (MUST happen before early returns!)
+    await swarm_manager.broadcast(payload)
+
+    # 3. Evaluate Alerts
     if packet.propulsion_systems.battery_state.capacity_remaining_percent < 20.0:
         return {
             "status": "CRITICAL_ALERT",
