@@ -11,16 +11,18 @@ services:
     ports:
       - "5432:5432"
     volumes:
-      - postgres_data:/var/lib/postgresql/data # Cleaned: Deleted folder reference removed completely!
+      - postgres_data:/var/lib/postgresql/data
     restart: always
 
   telemetry-api:
-    build: .
+    build: ./backend
     container_name: telemetry-api
     dns:
-      - 8.8.8.8 # Forces Docker to bypass local network stalls and find PyPI via Google DNS
+      - 8.8.8.8
     ports:
       - "8000:8000"
+    volumes:
+      - ./backend:/app
     environment:
       - RABBITMQ_HOST=rabbitmq
       - PYTHONUNBUFFERED=1
@@ -33,20 +35,21 @@ services:
     image: rabbitmq:4.0-management
     container_name: telemetry_queue
     ports:
-      - "5672:5672"          # Protocol port for sending data packets
-      - "15672:15672"        # Port for the visual management dashboard
+      - "5672:5672"
+      - "15672:15672"
     environment:
       RABBITMQ_DEFAULT_USER: guest
       RABBITMQ_DEFAULT_PASS: guest
     restart: on-failure
 
-  # --- BACKGROUND WORKER SERVICE (SELF-HEALING) ---
   telemetry-worker:
-    build: .
+    build: ./backend
     container_name: telemetry_worker
-    command: python -u worker.py
+    command: sh -c "sleep 10 && python -u worker.py"
     dns:
-      - 8.8.8.8 # Gives the worker build instance stable internet access too
+      - 8.8.8.8
+    volumes:
+      - ./backend:/app
     environment:
       - RABBITMQ_HOST=rabbitmq
       - DATABASE_URL=postgresql://postgres:alphaflight7@drone-postgres:5432/postgres
@@ -54,6 +57,13 @@ services:
     depends_on:
       - rabbitmq
       - drone-postgres
+    restart: always
+    
+  drone-simulator:
+    build: ./simulator
+    container_name: drone-simulator
+    depends_on:
+      - telemetry-api
     restart: always
 
 volumes:

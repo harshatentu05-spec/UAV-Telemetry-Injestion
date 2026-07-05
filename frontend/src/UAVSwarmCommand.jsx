@@ -28,29 +28,36 @@ function useLiveSwarmStream() {
     ws.onopen = () => console.log("🟢 Connected to Live Swarm Telemetry");
 
     ws.onmessage = (event) => {
-      const packet = JSON.parse(event.data);
-      const batteryLevel = packet.propulsion_systems.battery_state.capacity_remaining_percent;
-      
-      // Calculate dynamic status based on live battery levels
-      const currentStatus = batteryLevel < 10 ? "CRITICAL" : batteryLevel < 20 ? "WARNING" : "ACTIVE";
+      try {
+        const packet = JSON.parse(event.data);
+        console.log("🛸 INCOMING DRONE:", packet.drone_id); // This will prove data is arriving!
 
-      setSwarm(prev => ({
-        ...prev,
-        [packet.drone_id]: {
-          id: packet.drone_id,
-          callsign: packet.drone_id.toUpperCase(), 
-          status: currentStatus,
-          altitude: packet.flight_dynamics.altitude_meters,
-          airspeed: packet.flight_dynamics.airspeed_knots,
-          heading: packet.flight_dynamics.heading_degrees,
-          battery: batteryLevel,
-          lat: packet.tactical_sensors.gps.latitude,
-          lng: packet.tactical_sensors.gps.longitude,
-          signal: 95, // Assuming strong signal for the payload
-          proximityThreat: packet.tactical_sensors.threat_matrix.proximity_alert,
-          missionPhase: "LIVE-OPS",
-        }
-      }));
+        if (!packet.drone_id) return; // Ignore empty packets
+
+        // The '?.' protects the UI from crashing if a packet is missing a piece of data
+        const batteryLevel = packet?.propulsion_systems?.battery_state?.capacity_remaining_percent ?? 100;
+        const currentStatus = batteryLevel < 10 ? "CRITICAL" : batteryLevel < 20 ? "WARNING" : "ACTIVE";
+
+        setSwarm(prev => ({
+          ...prev,
+          [packet.drone_id]: {
+            id: packet.drone_id,
+            callsign: packet.drone_id.toUpperCase(), 
+            status: currentStatus,
+            altitude: packet?.flight_dynamics?.altitude_meters ?? 0,
+            airspeed: packet?.flight_dynamics?.airspeed_knots ?? 0,
+            heading: packet?.flight_dynamics?.heading_degrees ?? 0,
+            battery: batteryLevel,
+            lat: packet?.tactical_sensors?.gps?.latitude ?? 0,
+            lng: packet?.tactical_sensors?.gps?.longitude ?? 0,
+            signal: 95,
+            proximityThreat: packet?.tactical_sensors?.threat_matrix?.proximity_alert ?? false,
+            missionPhase: "LIVE-OPS",
+          }
+        }));
+      } catch (err) {
+        console.error("Packet read error:", err);
+      }
     };
 
     ws.onclose = () => console.log("🔴 Disconnected from Swarm");
