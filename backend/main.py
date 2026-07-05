@@ -3,8 +3,11 @@ import logging
 import time
 import pika
 import os
+import threading
+import psycopg2
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
+from psycopg2.extras import RealDictCursor
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s [%(name)s] %(message)s")
 logger = logging.getLogger("telemetry-api")
@@ -19,6 +22,24 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# --- GLOBAL RABBITMQ CONNECTION ---
+rabbitmq_host = os.getenv("RABBITMQ_HOST", "rabbitmq")
+rabbitmq_connection = None
+rabbitmq_channel = None
+
+def init_rabbitmq():
+    """Establish a single persistent connection to RabbitMQ on startup."""
+    global rabbitmq_connection, rabbitmq_channel
+    try:
+        rabbitmq_connection = pika.BlockingConnection(pika.ConnectionParameters(host=rabbitmq_host))
+        rabbitmq_channel = rabbitmq_connection.channel()
+        logger.info("Persistent RabbitMQ Connection Established.")
+    except Exception as e:
+        logger.error(f"Failed to connect to RabbitMQ on startup: {e}")
+
+# Call it immediately when the file loads
+init_rabbitmq()
 
 # --- THE BROADCASTER ---
 class ConnectionManager:
@@ -42,23 +63,21 @@ class ConnectionManager:
 
 swarm_manager = ConnectionManager()
 
-# --- THE BACKGROUND WORKER (Solves the freezing bug!) ---
 # --- THE BACKGROUND WORKER ---
 def publish_to_rabbitmq(payload: dict):
-    rabbitmq_host = os.getenv("RABBITMQ_HOST", "rabbitmq")
+    global rabbitmq_channel
     try:
-        connection = pika.BlockingConnection(pika.ConnectionParameters(host=rabbitmq_host))
-        channel = connection.channel()
-        
-        # WE REMOVED queue_declare() BECAUSE THE QUEUE ALREADY EXISTS!
-        
-        channel.basic_publish(
+        # Check if channel is closed (e.g. RabbitMQ restarted), try to reconnect
+        if rabbitmq_channel is None or rabbitmq_channel.is_closed:
+             init_rabbitmq()
+             
+        # Toss the message through the ALREADY OPEN door
+        rabbitmq_channel.basic_publish(
             exchange='',
             routing_key='uav_telemetry',
             body=json.dumps(payload),
             properties=pika.BasicProperties(delivery_mode=2)
         )
-        connection.close()
     except Exception as e:
         logger.error(f"RabbitMQ publish failed: {e}")
 # --------------------------------------------------------
@@ -78,9 +97,37 @@ def health_check():
 
 @app.get("/drones/{drone_id}/history")
 async def get_drone_history(drone_id: str, limit: int = 10):
-    return {"drone_id": drone_id, "count": 0, "records": []}
+    database_url = os.getenv("DATABASE_URL", "postgresql://postgres:alphaflight7@drone-postgres:5432/postgres")
+    try:
+        # Open a quick connection to fetch the data
+        conn = psycopg2.connect(database_url)
+        
+        # RealDictCursor automatically converts PostgreSQL rows into JSON-friendly Python dictionaries
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        
+        # Query: Get the most recent X records for this specific drone, sorting by newest first
+        query = """
+            SELECT timestamp, flight_dynamics, propulsion_systems, tactical_sensors 
+            FROM drone_telemetry_records 
+            WHERE drone_id = %s 
+            ORDER BY timestamp DESC 
+            LIMIT %s
+        """
+        cur.execute(query, (drone_id, limit))
+        records = cur.fetchall()
+        
+        cur.close()
+        conn.close()
+        
+        return {
+            "drone_id": drone_id,
+            "count": len(records),
+            "records": records
+        }
+    except Exception as e:
+        logger.error(f"Database query failed for {drone_id}: {e}")
+        raise HTTPException(status_code=500, detail="Database connection failed")
 
-# Notice we added 'background_tasks' here!
 @app.post("/ingest", status_code=202) 
 async def process_live_telemetry(payload: dict, background_tasks: BackgroundTasks):
     payload["processed_at_gateway"] = int(time.time())
@@ -88,7 +135,7 @@ async def process_live_telemetry(payload: dict, background_tasks: BackgroundTask
     # 1. Instantly broadcast to React Dashboard (No waiting!)
     await swarm_manager.broadcast(payload)
 
-    # 2. Tell the background worker to handle RabbitMQ so the main loop doesn't freeze
+    # 2. Tell the background worker to handle RabbitMQ using the persistent connection
     background_tasks.add_task(publish_to_rabbitmq, payload)
 
     return {"status": "QUEUED"}

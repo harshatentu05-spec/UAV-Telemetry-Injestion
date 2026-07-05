@@ -13,6 +13,10 @@ logging.getLogger("pika").setLevel(logging.WARNING)
 DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://postgres:alphaflight7@drone-postgres:5432/postgres")
 RABBITMQ_HOST = os.getenv("RABBITMQ_HOST", "rabbitmq")
 
+# --- BATCH SETTINGS ---
+BATCH_SIZE = 100
+message_buffer = []
+
 def get_db_connection():
     try:
         return psycopg2.connect(DATABASE_URL)
@@ -38,48 +42,82 @@ def setup_rabbitmq():
     
     return connection, channel
 
-def process_message(ch, method, properties, body):
-    payload = json.loads(body)
-    conn = get_db_connection()
+def flush_buffer_to_db(ch):
+    global message_buffer
+    if not message_buffer:
+        return
+
+    # Extract delivery tags and payload records
+    tags = [msg['tag'] for msg in message_buffer]
+    records = [msg['record'] for msg in message_buffer]
     
+    conn = get_db_connection()
     if not conn:
-        logger.warning(f"DB offline. Rejecting packet for {payload.get('drone_id')}. Routing to Dead Letter Queue.")
-        # requeue=False combined with our setup forces it into the DLQ!
-        ch.basic_reject(delivery_tag=method.delivery_tag, requeue=False)
+        logger.error("DB offline. Routing entire batch to DLQ.")
+        for tag in tags:
+            ch.basic_reject(delivery_tag=tag, requeue=False)
+        message_buffer.clear()
         return
 
     try:
         with conn.cursor() as cur:
-            cur.execute("""
+            query = """
                 INSERT INTO drone_telemetry_records 
                 (drone_id, timestamp, flight_dynamics, propulsion_systems, tactical_sensors)
-                VALUES (%s, %s, %s, %s, %s)
-            """, (
-                payload['drone_id'],
-                payload['timestamp'],
-                json.dumps(payload['flight_dynamics']),
-                json.dumps(payload['propulsion_systems']),
-                json.dumps(payload['tactical_sensors'])
-            ))
+                VALUES %s
+            """
+            # execute_values is insanely fast for bulk inserts
+            execute_values(cur, query, records)
         conn.commit()
-        ch.basic_ack(delivery_tag=method.delivery_tag)
-        logger.info(f"Successfully persisted telemetry for {payload.get('drone_id')}")
+        
+        # Acknowledge all messages in the batch ONLY after DB commit
+        for tag in tags:
+            ch.basic_ack(delivery_tag=tag)
+            
+        logger.info(f"Successfully bulk-persisted {len(records)} records.")
+        
     except Exception as e:
-        logger.error(f"Failed to insert record: {e}. Routing to Dead Letter Queue.")
+        logger.error(f"Bulk insert failed: {e}. Routing entire batch to DLQ.")
         conn.rollback()
-        ch.basic_reject(delivery_tag=method.delivery_tag, requeue=False)
+        for tag in tags:
+            ch.basic_reject(delivery_tag=tag, requeue=False)
     finally:
         if conn:
             conn.close()
+        message_buffer.clear() # Always empty the buffer after an attempt
+
+def process_message(ch, method, properties, body):
+    global message_buffer
+    payload = json.loads(body)
+    
+    # Format the record as a tuple for execute_values
+    record = (
+        payload.get('drone_id'),
+        payload.get('timestamp', time.time()), # <--- THE FIX (Adds current time if missing)
+        json.dumps(payload.get('flight_dynamics', {})),
+        json.dumps(payload.get('propulsion_systems', {})),
+        json.dumps(payload.get('tactical_sensors', {}))
+    )
+    
+    # Store both the RabbitMQ tag (to ack it later) and the DB record
+    message_buffer.append({
+        'tag': method.delivery_tag,
+        'record': record
+    })
+    
+    # Flush when buffer is full
+    if len(message_buffer) >= BATCH_SIZE:
+        flush_buffer_to_db(ch)
 
 if __name__ == "__main__":
-    logger.info("Starting telemetry persistence worker...")
-    time.sleep(5) # Give RabbitMQ time to boot
+    logger.info("Starting High-Performance telemetry worker...")
+    time.sleep(5) 
     
     while True:
         try:
             connection, channel = setup_rabbitmq()
-            channel.basic_qos(prefetch_count=50) # Batch processing limits
+            # Prefetch must be >= BATCH_SIZE so RabbitMQ hands us enough messages at once
+            channel.basic_qos(prefetch_count=BATCH_SIZE) 
             channel.basic_consume(queue='uav_telemetry', on_message_callback=process_message)
             logger.info("Worker actively consuming from uav_telemetry queue.")
             channel.start_consuming()
