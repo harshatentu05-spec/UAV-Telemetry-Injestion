@@ -9,7 +9,6 @@ import math
 import asyncio
 import psycopg2
 import sys
-from mission_coordinator import MissionCoordinator
 from simulation_safety import (
     should_return_to_hub,
     move_toward_waypoint,
