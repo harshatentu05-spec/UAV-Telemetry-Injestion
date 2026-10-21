@@ -19,7 +19,6 @@ import {
   Clock,
   ListChecks,
   X,
-  BarChart3,
   Search,
   Home,
 } from "lucide-react";
@@ -717,7 +716,7 @@ function MapArea({ drones, allDronesCount, selectedId, onSelect }) {
           flex: 1,
           position: "relative",
           overflow: "hidden",
-          cursor: dragRef.current ? "grabbing" : "grab",
+          cursor: "grab",
           touchAction: "none",
         }}
       >

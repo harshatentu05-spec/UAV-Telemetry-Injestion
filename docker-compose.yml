@@ -6,7 +6,7 @@ services:
     container_name: drone-postgres
     environment:
       POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: alphaflight7
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in your environment}
       POSTGRES_DB: postgres
     ports:
       - "5432:5432"
@@ -52,13 +52,13 @@ services:
       - ./backend:/app
     environment:
       - RABBITMQ_HOST=rabbitmq
-      - DATABASE_URL=postgresql://postgres:alphaflight7@drone-postgres:5432/postgres
+      - DATABASE_URL=postgresql://postgres:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in your environment}@drone-postgres:5432/postgres
       - PYTHONUNBUFFERED=1
     depends_on:
       - rabbitmq
       - drone-postgres
     restart: always
-    
+
   drone-simulator:
     build: ./simulator
     container_name: drone-simulator

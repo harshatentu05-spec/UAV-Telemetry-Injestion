@@ -10,7 +10,7 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s [%(nam
 logger = logging.getLogger("telemetry-worker")
 logging.getLogger("pika").setLevel(logging.WARNING)
 
-DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://postgres:alphaflight7@drone-postgres:5432/postgres")
+DATABASE_URL = os.getenv("DATABASE_URL")
 RABBITMQ_HOST = os.getenv("RABBITMQ_HOST", "rabbitmq")
 
 # --- BATCH SETTINGS ---
@@ -61,7 +61,7 @@ def flush_buffer_to_db(ch):
     try:
         with conn.cursor() as cur:
             query = """
-                INSERT INTO drone_telemetry_records 
+                INSERT INTO drone_telemetry_records
                 (drone_id, timestamp, flight_dynamics, propulsion_systems, tactical_sensors)
                 VALUES %s
             """
