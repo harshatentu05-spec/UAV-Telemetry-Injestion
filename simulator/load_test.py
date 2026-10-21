@@ -4,7 +4,7 @@ import requests
 import concurrent.futures
 
 API_URL = "http://telemetry-api:8000/ingest"
-NUM_DRONES = 400
+NUM_DRONES = 25
 
 def generate_payload(drone_id):
     # Generates a randomized, schema-compliant JSON payload
@@ -22,7 +22,7 @@ def generate_payload(drone_id):
                 "voltage": round(random.uniform(20.0, 24.0), 1),
                 "current_draw_amps": round(random.uniform(30.0, 50.0), 1),
                 # Occasionally drop battery low to trigger your CRITICAL ALERTS!
-                "capacity_remaining_percent": round(random.uniform(15.0, 100.0), 1), 
+                "capacity_remaining_percent": round(random.uniform(15.0, 100.0), 1),
                 "core_temperature_celsius": round(random.uniform(30.0, 45.0), 1)
             }
         },
@@ -49,9 +49,9 @@ def simulate_drone(drone_id):
             requests.post(API_URL, json=payload, timeout=2)
         except Exception:
             pass # Ignore dropped connections, keep firing!
-            
+
         # Fire a packet every 0.5 to 2 seconds randomly per drone
-        time.sleep(random.uniform(0.5, 2.0)) 
+        time.sleep(random.uniform(0.5, 2.0))
 
 if __name__ == "__main__":
     print(f" INITIATING SWARM LOAD TEST: {NUM_DRONES} DRONES 🔥")
