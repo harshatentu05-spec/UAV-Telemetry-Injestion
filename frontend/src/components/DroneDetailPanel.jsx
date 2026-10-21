@@ -21,26 +21,26 @@ export default function DroneDetailPanel({
 }) {
   if (!drone) return null;
 
-  const battery = Number(drone.battery || 0);
+  const battery = drone.battery == null ? null : Number(drone.battery);
   const distFromHub = calculateDistanceKm(drone.lat, drone.lng, TAMBARAM_HUB.lat, TAMBARAM_HUB.lng);
   const heading = Math.round(drone.heading || 0);
-  const estMinutesRemaining = Math.max(0, Math.round((battery / 100) * 45));
+  const estMinutesRemaining = battery == null ? null : Math.max(0, Math.round((battery / 100) * 45));
 
   // Battery bar color
-  const batColor = battery < 20 ? '#ef4444' : battery < 40 ? '#f59e0b' : '#10b981';
+  const batColor = battery == null ? '#64748b' : battery < 20 ? '#ef4444' : battery < 40 ? '#f59e0b' : '#10b981';
 
   return (
     <div style={{
-      width: '380px',
+      width: '100%',
       height: '100%',
       backgroundColor: '#0d1524',
-      borderLeft: '1px solid #1e2c44',
+      borderRight: '1px solid #1e2c44',
       display: 'flex',
       flexDirection: 'column',
       fontFamily: 'monospace',
       color: '#f1f5f9',
       zIndex: 60,
-      boxShadow: '-8px 0 25px rgba(0, 0, 0, 0.7)',
+      boxShadow: '8px 0 25px rgba(0, 0, 0, 0.55)',
       overflowY: 'auto',
     }}>
       {/* Top Header */}
@@ -107,7 +107,7 @@ export default function DroneDetailPanel({
       </div>
 
       <div style={{ padding: '16px', display: 'flex', flexDirection: 'column', gap: '16px' }}>
-
+        
         {/* SECTION 1: Dual Cell Battery Telemetry (Reference A) */}
         <div style={{
           backgroundColor: '#121c2e',
@@ -121,15 +121,15 @@ export default function DroneDetailPanel({
               <span>POWER PACK // LIPO 6S</span>
             </div>
             <div style={{ fontSize: '11px', color: '#64748b' }}>
-              EST. TIME: <strong style={{ color: '#f1f5f9' }}>{estMinutesRemaining}m</strong>
+              EST. TIME: <strong style={{ color: '#f1f5f9' }}>{estMinutesRemaining == null ? 'N/A' : `${estMinutesRemaining}m`}</strong>
             </div>
           </div>
 
           <div style={{ display: 'flex', alignItems: 'baseline', gap: '6px', marginBottom: '8px' }}>
             <span style={{ fontSize: '26px', fontWeight: 800, color: batColor }}>
-              {battery.toFixed(1)}%
+              {battery == null ? 'N/A' : `${battery.toFixed(1)}%`}
             </span>
-            <span style={{ fontSize: '11px', color: '#64748b' }}>22.8V // 45°C</span>
+            <span style={{ fontSize: '11px', color: '#64748b' }}>{drone.voltage != null ? `${drone.voltage}V` : 'VOLTAGE N/A'} // {drone.temperature != null ? `${drone.temperature}°C` : 'TEMP N/A'}</span>
           </div>
 
           {/* Dual Cell Balance Bar */}
@@ -140,7 +140,7 @@ export default function DroneDetailPanel({
                 <span>{battery.toFixed(0)}%</span>
               </div>
               <div style={{ height: '5px', backgroundColor: '#090d16', borderRadius: '2px', overflow: 'hidden' }}>
-                <div style={{ width: `${battery}%`, height: '100%', backgroundColor: batColor }} />
+                <div style={{ width: `${battery ?? 0}%`, height: '100%', backgroundColor: batColor }} />
               </div>
             </div>
             <div style={{ flex: 1 }}>

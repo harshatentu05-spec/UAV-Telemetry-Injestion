@@ -1,16 +1,6 @@
-import { useState, useEffect, useMemo, useRef } from 'react';
-import {
-  ArrowLeft,
-  Battery,
-  Gauge,
-  Navigation,
-  Activity,
-  Radio,
-  Clock,
-  Download,
-  CheckCircle,
-  Database,
-} from 'lucide-react';
+import { useState, useEffect, useMemo } from 'react';
+import { apiUrl } from '../api';
+import { ArrowLeft, Download } from 'lucide-react';
 
 export default function AnalysisWorkspace({
   drone,
@@ -45,7 +35,7 @@ export default function AnalysisWorkspace({
     async function fetchHistory() {
       setLoading(true);
       try {
-        const res = await fetch(`http://localhost:8000/drones/${encodeURIComponent(selectedDroneId)}/history?limit=30`);
+        const res = await fetch(`${apiUrl(`/drones/${encodeURIComponent(selectedDroneId)}/history?limit=30`)}`);
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const data = await res.json();
         if (!ignore && data?.records) {
@@ -72,17 +62,21 @@ export default function AnalysisWorkspace({
     };
 
     if (!historyRecords || historyRecords.length === 0) {
-      // If no DB records yet, synthesize the current live point
-      const now = activeDrone?.lastSeen || Date.now();
+      // Use only a real current telemetry point; never fabricate history.
+      const hasLivePoint = Number.isFinite(Number(activeDrone?.lastSeen)) ||
+        Number.isFinite(Number(activeDrone?.lat)) ||
+        Number.isFinite(Number(activeDrone?.battery));
+      if (!hasLivePoint || !activeDrone) return [];
+      const now = Number(activeDrone.lastSeen) || 0;
       return [{
         timestamp: now,
-        timeLabel: new Date(now).toLocaleTimeString([], { hour12: false }),
-        battery: Number(activeDrone?.battery ?? 100),
-        altitude: Number(activeDrone?.altitude ?? 60),
-        speed: Number(activeDrone?.airspeed ?? 41.7),
-        heading: Number(activeDrone?.heading ?? 0),
-        lat: activeDrone?.lat ?? 12.9249,
-        lng: activeDrone?.lng ?? 80.1000,
+        timeLabel: now ? new Date(now).toLocaleTimeString([], { hour12: false }) : 'Current',
+        battery: Number.isFinite(Number(activeDrone.battery)) ? Number(activeDrone.battery) : null,
+        altitude: Number.isFinite(Number(activeDrone.altitude)) ? Number(activeDrone.altitude) : null,
+        speed: Number.isFinite(Number(activeDrone.airspeed)) ? Number(activeDrone.airspeed) : null,
+        heading: Number.isFinite(Number(activeDrone.heading)) ? Number(activeDrone.heading) : null,
+        lat: Number.isFinite(Number(activeDrone.lat)) ? Number(activeDrone.lat) : null,
+        lng: Number.isFinite(Number(activeDrone.lng)) ? Number(activeDrone.lng) : null,
       }];
     }
 
@@ -91,7 +85,7 @@ export default function AnalysisWorkspace({
 
     return chronological.map((rec) => {
       const ts = Number(rec.timestamp);
-      const timeMs = !isNaN(ts) ? ts * 1000 : Date.now();
+      const timeMs = Number.isFinite(ts) ? ts * 1000 : 0;
       const flight = parseField(rec.flight_dynamics);
       const prop = parseField(rec.propulsion_systems);
       const sensors = parseField(rec.tactical_sensors);
@@ -444,7 +438,7 @@ export default function AnalysisWorkspace({
 
       {/* Main Content Area */}
       <div style={{ padding: '24px 28px', maxWidth: '1280px', margin: '0 auto', width: '100%' }}>
-
+        
         {/* Live Status Cards Ribbon */}
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: '12px', marginBottom: '20px' }}>
           <div style={{ backgroundColor: '#0d1524', border: '1px solid #1e2c44', borderRadius: '4px', padding: '12px' }}>

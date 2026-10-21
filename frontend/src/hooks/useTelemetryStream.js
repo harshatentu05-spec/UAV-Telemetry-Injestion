@@ -1,10 +1,30 @@
 import { useState, useEffect, useRef, useMemo } from 'react';
+import { apiUrl, telemetrySocketUrl } from '../api';
 
-const WS_URL = 'ws://localhost:8000/ws/telemetry';
-const REST_DRONES_URL = 'http://localhost:8000/drones';
+const WS_URL = telemetrySocketUrl();
+const REST_DRONES_URL = apiUrl('/drones');
 const STALE_TIMEOUT_MS = 8000;
 const STALE_CHECK_INTERVAL_MS = 1000;
 const MAX_RECONNECT_DELAY_MS = 15000;
+
+function normalizeStatus(state, battery) {
+  const normalized = String(state || '').toUpperCase();
+  if (['OFFLINE', 'UNKNOWN', 'RESTING', 'CHARGING', 'EN_ROUTE', 'RETURNING', 'HOLD', 'LANDED', 'EMERGENCY'].includes(normalized)) {
+    if (battery != null && battery <= 15 && !['CHARGING', 'RESTING', 'LANDED'].includes(normalized)) return 'CRITICAL';
+    if (battery != null && battery <= 30 && battery > 15 && ['ACTIVE', 'EN_ROUTE'].includes(normalized)) return 'WARNING';
+    return normalized;
+  }
+  if (battery == null) return 'UNKNOWN';
+  if (battery <= 15) return 'CRITICAL';
+  if (battery <= 30) return 'WARNING';
+  return normalized || 'ACTIVE';
+}
+
+function toNumberOrNull(value) {
+  if (value === null || value === undefined || value === '') return null;
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
+}
 
 function calculateBearing(lat1, lon1, lat2, lon2) {
   if (lat1 === lat2 && lon1 === lon2) return 0;
@@ -41,22 +61,25 @@ export function useTelemetryStream(isDemoMode = false, demoDrones = []) {
           const next = { ...prev };
           for (const [id, info] of Object.entries(data)) {
             if (!next[id]) {
-              const battery = Number(info.battery_pct ?? 100);
-              const status = info.state || (battery < 15 ? 'CRITICAL' : battery < 30 ? 'WARNING' : 'ACTIVE');
+              const battery = toNumberOrNull(info.battery_pct);
+              const status = normalizeStatus(info.state, battery);
               next[id] = {
                 id,
                 callsign: id.toUpperCase(),
                 status,
-                altitude: 60,
-                airspeed: 41.67,
-                heading: 45,
+                altitude: toNumberOrNull(info.altitude_m),
+                airspeed: toNumberOrNull(info.speed_mps),
+                heading: toNumberOrNull(info.heading_degrees),
+                route: Array.isArray(info.route) ? info.route : null,
+                targetLat: toNumberOrNull(info.target_lat),
+                targetLng: toNumberOrNull(info.target_lng),
                 battery,
-                lat: Number(info.lat ?? 12.9249),
-                lng: Number(info.lng ?? 80.1000),
-                signal: 95,
-                destination: info.destination || 'Tambaram Hub',
+                lat: toNumberOrNull(info.lat),
+                lng: toNumberOrNull(info.lng),
+                signal: toNumberOrNull(info.signal_strength),
+                destination: info.destination || null,
                 activeOrder: info.order_id || null,
-                proximityThreat: false,
+                proximityThreat: Boolean(info.proximityThreat),
                 lastSeen: Date.now(),
               };
             }
@@ -114,41 +137,37 @@ export function useTelemetryStream(isDemoMode = false, demoDrones = []) {
           let lat, lng, alt, speed, battery, state, order, destination, proximity;
 
           if (packet.location && packet.telemetry) {
-            lat = Number(packet.location.lat);
-            lng = Number(packet.location.lng);
-            alt = Number(packet.location.altitude_m ?? 0);
-            battery = Number(packet.telemetry.battery_pct ?? 100);
-            speed = Number(packet.telemetry.speed_mps ?? 0);
-            state = packet.telemetry.operational_state || 'ACTIVE';
+            lat = toNumberOrNull(packet.location.lat);
+            lng = toNumberOrNull(packet.location.lng);
+            alt = toNumberOrNull(packet.location.altitude_m);
+            battery = toNumberOrNull(packet.telemetry.battery_pct);
+            speed = toNumberOrNull(packet.telemetry.speed_mps);
+            state = packet.telemetry.operational_state || normalizeStatus(null, battery);
             order = packet.telemetry.active_order || null;
             destination = packet.telemetry.destination || 'Tambaram Hub';
             proximity = false;
           } else {
             const gps = packet.tactical_sensors?.gps || {};
-            lat = Number(gps.latitude ?? 0);
-            lng = Number(gps.longitude ?? 0);
-            alt = Number(packet.flight_dynamics?.altitude_meters ?? 0);
-            speed = Number((packet.flight_dynamics?.airspeed_knots ? packet.flight_dynamics.airspeed_knots * 0.514444 : 0));
-            battery = Number(packet.propulsion_systems?.battery_state?.capacity_remaining_percent ?? 100);
-            state = battery < 10 ? 'CRITICAL' : battery < 20 ? 'WARNING' : 'ACTIVE';
+            lat = toNumberOrNull(gps.latitude);
+            lng = toNumberOrNull(gps.longitude);
+            alt = toNumberOrNull(packet.flight_dynamics?.altitude_meters);
+            const knots = toNumberOrNull(packet.flight_dynamics?.airspeed_knots);
+            speed = knots == null ? null : knots * 0.514444;
+            battery = toNumberOrNull(packet.propulsion_systems?.battery_state?.capacity_remaining_percent);
+            state = normalizeStatus(null, battery);
             order = null;
             destination = 'Tactical Route';
             proximity = packet.tactical_sensors?.threat_matrix?.proximity_alert ?? false;
           }
 
-          let heading = existing?.heading ?? 0;
+          let heading = existing?.heading ?? null;
           if (packet.flight_dynamics?.heading_degrees != null) {
             heading = Number(packet.flight_dynamics.heading_degrees);
           } else if (existing?.lat != null && existing?.lng != null && (lat !== existing.lat || lng !== existing.lng)) {
             heading = calculateBearing(existing.lat, existing.lng, lat, lng);
           }
 
-          let status = state;
-          if (battery <= 15 && status !== 'CHARGING') {
-            status = 'CRITICAL';
-          } else if (battery <= 30 && status !== 'CHARGING' && status !== 'CRITICAL') {
-            status = 'WARNING';
-          }
+          const status = normalizeStatus(state, battery);
 
           return {
             ...prev,
@@ -163,8 +182,11 @@ export function useTelemetryStream(isDemoMode = false, demoDrones = []) {
               battery,
               lat,
               lng,
-              signal: status === 'OFFLINE' ? 0 : 96,
+              signal: status === 'OFFLINE' ? 0 : toNumberOrNull(packet.signal_strength ?? packet.telemetry?.signal_strength),
               destination,
+              targetLat: toNumberOrNull(packet.target_lat ?? packet.telemetry?.target_lat) ?? existing?.targetLat ?? null,
+              targetLng: toNumberOrNull(packet.target_lng ?? packet.telemetry?.target_lng) ?? existing?.targetLng ?? null,
+              route: Array.isArray(packet.route) ? packet.route : (existing?.route ?? null),
               activeOrder: order,
               proximityThreat: proximity,
               lastSeen: Date.now(),

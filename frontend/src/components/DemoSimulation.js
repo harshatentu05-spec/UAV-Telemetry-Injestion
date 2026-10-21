@@ -73,15 +73,15 @@ const STATIC_SIM_DRONES = [
     lng: 80.1400,
     startLat: TAMBARAM_HUB.lat,
     startLng: TAMBARAM_HUB.lng,
-    targetLat: CHENNAI_TARGETS[1].lat,
-    targetLng: CHENNAI_TARGETS[1].lng,
+    targetLat: CHENNAI_TARGETS[7].lat,
+    targetLng: CHENNAI_TARGETS[7].lng,
     altitude: 85,
     airspeed: 39.8,
     heading: 38,
     battery: 67.2,
     status: 'EN_ROUTE',
-    destination: CHENNAI_TARGETS[1].name,
-    activeOrder: CHENNAI_TARGETS[1].id,
+    destination: CHENNAI_TARGETS[7].name,
+    activeOrder: CHENNAI_TARGETS[7].id,
     signal: 92,
     progress: 0.60,
     isSimulated: true,
@@ -91,19 +91,19 @@ const STATIC_SIM_DRONES = [
   {
     id: 'SIM-03',
     callsign: 'SIM-UAV-03',
-    lat: 12.9850,
-    lng: 80.1700,
-    startLat: CHENNAI_TARGETS[2].lat,
-    startLng: CHENNAI_TARGETS[2].lng,
-    targetLat: TAMBARAM_HUB.lat,
-    targetLng: TAMBARAM_HUB.lng,
+    lat: 12.9560,
+    lng: 80.1350,
+    startLat: 12.9560,
+    startLng: 80.1350,
+    targetLat: CHENNAI_TARGETS[7].lat,
+    targetLng: CHENNAI_TARGETS[7].lng,
     altitude: 64,
     airspeed: 42.0,
     heading: 215,
     battery: 28.4,
     status: 'WARNING',
-    destination: 'Emergency Return to Hub',
-    activeOrder: null,
+    destination: CHENNAI_TARGETS[7].name,
+    activeOrder: CHENNAI_TARGETS[7].id,
     signal: 86,
     progress: 0.25,
     isSimulated: true,
@@ -113,19 +113,19 @@ const STATIC_SIM_DRONES = [
   {
     id: 'SIM-04',
     callsign: 'SIM-UAV-04',
-    lat: 12.9900,
-    lng: 80.1980,
+    lat: 12.9300,
+    lng: 80.1250,
     startLat: TAMBARAM_HUB.lat,
     startLng: TAMBARAM_HUB.lng,
-    targetLat: CHENNAI_TARGETS[3].lat,
-    targetLng: CHENNAI_TARGETS[3].lng,
+    targetLat: CHENNAI_TARGETS[7].lat,
+    targetLng: CHENNAI_TARGETS[7].lng,
     altitude: 90,
     airspeed: 40.2,
     heading: 48,
     battery: 73.0,
     status: 'EN_ROUTE',
-    destination: CHENNAI_TARGETS[3].name,
-    activeOrder: CHENNAI_TARGETS[3].id,
+    destination: CHENNAI_TARGETS[7].name,
+    activeOrder: CHENNAI_TARGETS[7].id,
     signal: 95,
     progress: 0.82,
     isSimulated: true,
@@ -178,6 +178,30 @@ const STATIC_SIM_DRONES = [
   },
 ];
 
+function pointInPolygon(point, polygon) {
+  const [lat, lng] = point;
+  let inside = false;
+  for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
+    const [yi, xi] = polygon[i];
+    const [yj, xj] = polygon[j];
+    const intersects = ((xi > lng) !== (xj > lng)) &&
+      (lat < ((yj - yi) * (lng - xi)) / ((xj - xi) || Number.EPSILON) + yi);
+    if (intersects) inside = !inside;
+  }
+  return inside;
+}
+
+function segmentCrossesRestrictedZone(fromLat, fromLng, toLat, toLng) {
+  // Sample the segment so a long movement step cannot jump across a polygon.
+  for (let step = 0; step <= 20; step += 1) {
+    const t = step / 20;
+    const lat = fromLat + (toLat - fromLat) * t;
+    const lng = fromLng + (toLng - fromLng) * t;
+    if (pointInPolygon([lat, lng], GEOFENCE_RESTRICTED)) return true;
+  }
+  return false;
+}
+
 export function useDemoSimulation(active = false) {
   const [isRunning, setIsRunning] = useState(true);
   const [drones, setDrones] = useState(STATIC_SIM_DRONES);
@@ -202,7 +226,20 @@ export function useDemoSimulation(active = false) {
             return { ...d, lastSeen: Date.now() };
           }
 
-          // Advance along route
+          // A critically depleted simulated aircraft must not continue normal mission movement.
+          // This demo has no physical return/landing controller, so it enters an explicit hold.
+          if (Number(d.battery) <= 10 || d.status === 'CRITICAL') {
+            return {
+              ...d,
+              battery: Math.max(0, Number(d.battery)),
+              status: 'CRITICAL',
+              operationalState: 'LOW_BATTERY_HOLD',
+              airspeed: 0,
+              lastSeen: Date.now(),
+            };
+          }
+
+          // Advance only when the next segment stays outside the configured restricted polygon.
           const step = 0.006;
           let progress = d.progress + step;
           let startLat = d.startLat;
@@ -233,6 +270,18 @@ export function useDemoSimulation(active = false) {
 
           const curLat = startLat + (targetLat - startLat) * progress;
           const curLng = startLng + (targetLng - startLng) * progress;
+
+          if (segmentCrossesRestrictedZone(d.lat, d.lng, curLat, curLng)) {
+            return {
+              ...d,
+              status: 'AIRSPACE_HOLD',
+              operationalState: 'RESTRICTED_ZONE_HOLD',
+              proximityThreat: true,
+              airspeed: 0,
+              lastSeen: Date.now(),
+            };
+          }
+
           const heading = calculateBearing(d.lat, d.lng, curLat, curLng) || d.heading;
 
           if (battery < 20 && status !== 'CRITICAL') {

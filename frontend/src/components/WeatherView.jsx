@@ -31,7 +31,7 @@ export default function WeatherView() {
       const res = await fetch(url);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
-
+      
       const current = data.current;
       if (current) {
         setWeatherData({

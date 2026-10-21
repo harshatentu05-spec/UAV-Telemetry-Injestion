@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { apiUrl } from '../api';
 import { Target, Send, CheckCircle2, AlertTriangle } from 'lucide-react';
 import { TAMBARAM_HUB, CHENNAI_TARGETS } from './DemoSimulation';
 
@@ -43,7 +44,7 @@ export default function MissionsView({
     };
 
     try {
-      const response = await fetch('http://localhost:8000/missions/evaluate', {
+      const response = await fetch(apiUrl('/missions/evaluate'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),

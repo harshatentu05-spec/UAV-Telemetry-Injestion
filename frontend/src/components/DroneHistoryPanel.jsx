@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { apiUrl } from '../api';
 import { Database, Search, AlertCircle, Clock, ShieldCheck } from 'lucide-react';
 
 export default function DroneHistoryPanel({ initialDroneId = 'UAV-01' }) {
@@ -12,7 +13,7 @@ export default function DroneHistoryPanel({ initialDroneId = 'UAV-01' }) {
     setLoading(true);
     setErrorMsg(null);
     try {
-      const response = await fetch(`http://localhost:8000/drones/${encodeURIComponent(droneId.trim())}/history?limit=15`);
+      const response = await fetch(`${apiUrl(`/drones/${encodeURIComponent(droneId.trim())}/history?limit=15`)}`);
       if (!response.ok) {
         throw new Error(`HTTP ${response.status}: ${response.statusText}`);
       }
@@ -56,23 +57,23 @@ export default function DroneHistoryPanel({ initialDroneId = 'UAV-01' }) {
           <span>CRYPTOGRAPHIC LEDGER</span>
         </div>
       </div>
-
+      
       {/* Search Input Bar */}
       <div style={{ display: 'flex', gap: '10px', marginBottom: '20px' }}>
         <div style={{ position: 'relative', flexGrow: 1 }}>
           <Search size={14} color="#64748b" style={{ position: 'absolute', left: '12px', top: '12px' }} />
-          <input
-            type="text"
-            value={droneId}
+          <input 
+            type="text" 
+            value={droneId} 
             onChange={(e) => setDroneId(e.target.value)}
             onKeyDown={(e) => e.key === 'Enter' && fetchHistory()}
             placeholder="Search Callsign (e.g. UAV-01, UAV-02)..."
-            style={{
+            style={{ 
               width: '100%',
-              padding: '10px 12px 10px 36px',
-              backgroundColor: '#121c2e',
-              color: '#00f0ff',
-              border: '1px solid #2a3d5e',
+              padding: '10px 12px 10px 36px', 
+              backgroundColor: '#121c2e', 
+              color: '#00f0ff', 
+              border: '1px solid #2a3d5e', 
               borderRadius: '4px',
               fontFamily: 'inherit',
               fontSize: '13px',
@@ -80,15 +81,15 @@ export default function DroneHistoryPanel({ initialDroneId = 'UAV-01' }) {
             }}
           />
         </div>
-        <button
+        <button 
           onClick={fetchHistory}
           disabled={loading}
-          style={{
-            padding: '10px 20px',
-            backgroundColor: loading ? '#1e293b' : '#0284c7',
-            color: '#fff',
-            border: 'none',
-            borderRadius: '4px',
+          style={{ 
+            padding: '10px 20px', 
+            backgroundColor: loading ? '#1e293b' : '#0284c7', 
+            color: '#fff', 
+            border: 'none', 
+            borderRadius: '4px', 
             cursor: loading ? 'not-allowed' : 'pointer',
             fontSize: '12px',
             fontWeight: 700,
@@ -104,13 +105,13 @@ export default function DroneHistoryPanel({ initialDroneId = 'UAV-01' }) {
 
       {/* Error / Empty Notification */}
       {errorMsg && (
-        <div style={{
-          padding: '12px 16px',
-          backgroundColor: 'rgba(239, 68, 68, 0.1)',
-          border: '1px solid rgba(239, 68, 68, 0.4)',
-          borderRadius: '4px',
-          color: '#ef4444',
-          fontSize: '12px',
+        <div style={{ 
+          padding: '12px 16px', 
+          backgroundColor: 'rgba(239, 68, 68, 0.1)', 
+          border: '1px solid rgba(239, 68, 68, 0.4)', 
+          borderRadius: '4px', 
+          color: '#ef4444', 
+          fontSize: '12px', 
           marginBottom: '16px',
           display: 'flex',
           alignItems: 'center',
@@ -147,7 +148,7 @@ export default function DroneHistoryPanel({ initialDroneId = 'UAV-01' }) {
 
                 // Altitude resolution
                 const alt = flight.altitude_m ?? flight.altitude_meters ?? 0;
-
+                
                 // Speed resolution (mps or knots)
                 const speed = flight.speed_mps ?? (flight.airspeed_knots ? flight.airspeed_knots * 0.514444 : 0);
 
@@ -161,9 +162,9 @@ export default function DroneHistoryPanel({ initialDroneId = 'UAV-01' }) {
                 const dest = sensors.destination ?? sensors.active_order ?? "TAMBARAM HUB";
 
                 return (
-                  <tr
-                    key={index}
-                    style={{
+                  <tr 
+                    key={index} 
+                    style={{ 
                       borderBottom: '1px solid #152238',
                       backgroundColor: index % 2 === 0 ? '#0d1524' : '#0f1828'
                     }}

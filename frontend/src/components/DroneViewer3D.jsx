@@ -1,18 +1,16 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef } from 'react';
 import * as THREE from 'three';
 
 export default function DroneViewer3D({
   status = 'ACTIVE',
-  battery = 100,
-  heading = 0,
 }) {
   const mountRef = useRef(null);
-  const [webglError, setWebglError] = useState(false);
 
   useEffect(() => {
     const container = mountRef.current;
     if (!container) return;
 
+    container.replaceChildren();
     let renderer, scene, camera, droneGroup, animationFrameId;
     const rotors = [];
 
@@ -90,7 +88,7 @@ export default function DroneViewer3D({
 
       // Front Camera Gimbal Pod
       const gimbalArmGeo = new THREE.CylinderGeometry(0.04, 0.04, 0.2, 8);
-      const gimbalArm = new THREE.Mesh(gimbalArmArm => gimbalArmGeo, bodyMat);
+      const gimbalArm = new THREE.Mesh(gimbalArmGeo, bodyMat);
       gimbalArm.position.set(0, -0.15, 0.65);
       droneGroup.add(gimbalArm);
 
@@ -213,33 +211,12 @@ export default function DroneViewer3D({
       };
     } catch (err) {
       console.warn('3D WebGL initialization failed, using 2D fallback:', err);
-      setWebglError(true);
+      if (container) {
+        container.innerHTML = '<div style="height:140px;display:flex;align-items:center;justify-content:center;color:#fbbf24;font:12px monospace;text-align:center;padding:12px">3D VIEWER UNAVAILABLE<br/>WebGL initialization failed</div>';
+      }
     }
-  }, [status, battery, heading]);
+  }, [status]);
 
-  if (webglError) {
-    return (
-      <div style={{
-        width: '100%',
-        height: '140px',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        background: 'radial-gradient(circle, rgba(0,240,255,0.08) 0%, rgba(13,21,36,0) 70%)',
-      }}>
-        <svg width="90" height="90" viewBox="0 0 100 100" fill="none">
-          <circle cx="50" cy="50" r="42" stroke="#1e2c44" strokeWidth="1.5" strokeDasharray="3 3" />
-          <circle cx="50" cy="50" r="14" fill="#121c2e" stroke="#00f0ff" strokeWidth="2" />
-          <line x1="20" y1="20" x2="80" y2="80" stroke="#38bdf8" strokeWidth="3" />
-          <line x1="80" y1="20" x2="20" y2="80" stroke="#38bdf8" strokeWidth="3" />
-          <circle cx="20" cy="20" r="8" fill="#162238" stroke="#00f0ff" strokeWidth="1.5" />
-          <circle cx="80" cy="20" r="8" fill="#162238" stroke="#00f0ff" strokeWidth="1.5" />
-          <circle cx="20" cy="80" r="8" fill="#162238" stroke="#00f0ff" strokeWidth="1.5" />
-          <circle cx="80" cy="80" r="8" fill="#162238" stroke="#00f0ff" strokeWidth="1.5" />
-        </svg>
-      </div>
-    );
-  }
 
   return (
     <div

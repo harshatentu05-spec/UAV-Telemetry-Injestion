@@ -19,12 +19,13 @@ import TelemetryView from './components/TelemetryView';
 import WeatherView from './components/WeatherView';
 
 import { useTelemetryStream } from './hooks/useTelemetryStream';
+import { API_BASE_URL, telemetrySocketUrl } from './api';
 import { useDemoSimulation } from './components/DemoSimulation';
 
 export default function App() {
   const [activeView, setActiveView] = useState('map'); // 'map' | 'fleet' | 'missions' | 'airspace' | 'telemetry' | 'analysis' | 'weather' | 'alerts' | 'settings'
   const [isDemoMode, setIsDemoMode] = useState(false);
-  const [selectedDroneId, setSelectedDroneId] = useState('UAV-01');
+  const [selectedDroneId, setSelectedDroneId] = useState(null);
   const [showDetailDrawer, setShowDetailDrawer] = useState(false);
   const [showHistoryModal, setShowHistoryModal] = useState(false);
   const [historyModalDroneId, setHistoryModalDroneId] = useState('UAV-01');
@@ -78,7 +79,7 @@ export default function App() {
   const { drones, connectionStatus } = useTelemetryStream(isDemoMode, demoDrones);
 
   const selectedDrone = useMemo(() => {
-    return drones.find((d) => d.id === selectedDroneId) || drones[0] || null;
+    return selectedDroneId ? (drones.find((d) => d.id === selectedDroneId) || null) : null;
   }, [drones, selectedDroneId]);
 
   // Derived Alerts stream
@@ -91,8 +92,8 @@ export default function App() {
           type: 'diagnostic',
           severity: 'critical',
           droneId: d.id,
-          title: `Critical Battery Depletion [${d.battery}%]`,
-          desc: `${d.callsign || d.id} battery is critically depleted. Automated RTB protocol active.`,
+          title: `Critical Battery Depletion [${d.battery == null ? 'N/A' : `${d.battery}%`}]`,
+          desc: `${d.callsign || d.id} battery is critically depleted. Verify the aircraft state; automatic return is not confirmed by telemetry.`,
           time: new Date(d.lastSeen).toLocaleTimeString([], { hour12: false }),
         });
       } else if (d.status === 'WARNING') {
@@ -101,8 +102,8 @@ export default function App() {
           type: 'diagnostic',
           severity: 'warning',
           droneId: d.id,
-          title: `Low Battery Advisory [${d.battery}%]`,
-          desc: `${d.callsign || d.id} reaching minimum return-to-base reserve ceiling.`,
+          title: `Low Battery Advisory [${d.battery == null ? 'N/A' : `${d.battery}%`}]`,
+          desc: `${d.callsign || d.id} is below the configured battery advisory threshold.`,
           time: new Date(d.lastSeen).toLocaleTimeString([], { hour12: false }),
         });
       }
@@ -139,7 +140,24 @@ export default function App() {
   }, [alertsList, acknowledgedAlerts]);
 
   const handleSelectDrone = useCallback((d) => {
+    if (!d?.id) return;
     setSelectedDroneId(d.id);
+    setShowDetailDrawer(true);
+
+    // Only draw a route when the selected drone supplies route/target coordinates.
+    // This avoids inventing a path for live telemetry that has no route metadata.
+    const routePoints = Array.isArray(d.route) ? d.route :
+      (d.targetLat != null && d.targetLng != null && d.lat != null && d.lng != null &&
+       Number.isFinite(Number(d.targetLat)) && Number.isFinite(Number(d.targetLng)) &&
+       Number.isFinite(Number(d.lat)) && Number.isFinite(Number(d.lng)) &&
+       Number(d.lat) !== 0 && Number(d.lng) !== 0
+        ? [[Number(d.lat), Number(d.lng)], [Number(d.targetLat), Number(d.targetLng)]]
+        : null);
+    if (routePoints && routePoints.length > 1) {
+      setActiveRoute({ outbound: routePoints, return: [] });
+    } else {
+      setActiveRoute(null);
+    }
   }, []);
 
   const handleOpenTelemetryWorkspace = useCallback((d) => {
@@ -172,13 +190,16 @@ export default function App() {
       {/* ─── FLOATING TOP-RIGHT MISSION & CLOCK HUD (REFERENCE 1) ─────────── */}
       <header style={{
         position: 'absolute',
-        top: 14,
-        left: 80,
-        right: 18,
-        height: '42px',
+        top: 12,
+        left: 78,
+        right: 356,
+        minHeight: '42px',
+        height: 'auto',
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'space-between',
+        flexWrap: 'wrap',
+        gap: 8,
         zIndex: 420,
         pointerEvents: 'none',
       }}>
@@ -367,9 +388,9 @@ export default function App() {
       {isDemoMode && (
         <div style={{
           position: 'absolute',
-          top: 60,
-          left: 80,
-          right: 18,
+          top: 62,
+          left: 78,
+          right: 356,
           backgroundColor: 'rgba(139, 92, 246, 0.35)',
           backdropFilter: 'blur(6px)',
           border: '1px solid #8b5cf6',
@@ -407,10 +428,18 @@ export default function App() {
       <NavigationRail
         activeView={activeView}
         onSelectView={(view) => {
-          if (view === 'map' || view === 'fleet') {
-            setActiveView(view);
-          } else {
-            setActiveView(view);
+          setActiveView(view);
+          if (view === 'fleet') {
+            // Fleet is a fleet-wide workspace, not a continuation of the last selected aircraft.
+            setSelectedDroneId(null);
+            setShowDetailDrawer(false);
+            setActiveRoute(null);
+          } else if (view === 'map') {
+            // Returning to the map keeps a selected drone only when its detail drawer is open.
+            if (!showDetailDrawer) {
+              setSelectedDroneId(null);
+              setActiveRoute(null);
+            }
           }
         }}
         alertsCount={activeAlerts.length}
@@ -427,7 +456,7 @@ export default function App() {
           activeRoute={activeRoute}
           showGeofences={showGeofences}
           onToggleGeofences={() => setShowGeofences((p) => !p)}
-          topRightOffset={showDetailDrawer ? 380 : 0}
+          topRightOffset={0}
         />
       </div>
 
@@ -445,7 +474,7 @@ export default function App() {
       )}
 
       {/* ─── DEDICATED OVERLAY WORKSPACES (SECTIONS 6, 7, 8) ───────────────── */}
-
+      
       {/* 1. Dedicated Aircraft Telemetry & Analysis Workspace */}
       {activeView === 'analysis' && (
         <div style={{ position: 'absolute', top: 0, left: 0, width: '100vw', height: '100vh', zIndex: 600 }}>
@@ -590,20 +619,33 @@ export default function App() {
               &larr; RETURN TO MAP (ESC)
             </button>
           </div>
-          <div style={{ padding: '32px', color: '#f1f5f9', flex: 1, overflowY: 'auto' }}>
-            <h1 style={{ fontSize: '20px', fontWeight: 800, marginBottom: '16px', fontFamily: 'monospace' }}>SKYGRID SYSTEM SETTINGS</h1>
-            <div style={{ maxWidth: '600px', backgroundColor: '#0d1524', border: '1px solid #1e2c44', borderRadius: '6px', padding: '24px', display: 'flex', flexDirection: 'column', gap: '16px', fontFamily: 'monospace' }}>
-              <div>
-                <label style={{ display: 'block', fontSize: '11px', color: '#94a3b8', marginBottom: '6px' }}>PRIMARY HUB TELEMETRY WEBSOCKET</label>
-                <input readOnly value="ws://localhost:8000/ws/telemetry" style={{ width: '100%', padding: '8px 10px', backgroundColor: '#121c2e', color: '#00f0ff', border: '1px solid #2a3d5e', borderRadius: '4px', fontFamily: 'monospace', fontSize: '12px' }} />
+          <div style={{ padding: 'clamp(20px, 4vw, 42px)', color: '#e7eef9', flex: 1, overflowY: 'auto', background: 'radial-gradient(ellipse at 85% 0%, rgba(14,165,233,.09), transparent 38%), #080e18' }}>
+            <div style={{ maxWidth: '1040px', margin: '0 auto', fontFamily: 'Inter, system-ui, sans-serif' }}>
+              <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', gap: 16, flexWrap: 'wrap', marginBottom: 26 }}>
+                <div>
+                  <div style={{ color: '#5bc9ee', fontSize: 11, fontWeight: 800, letterSpacing: '.16em', marginBottom: 8 }}>PLATFORM CONFIGURATION</div>
+                  <h1 style={{ fontSize: 'clamp(24px, 3vw, 34px)', lineHeight: 1.15, margin: 0, fontWeight: 750 }}>System settings</h1>
+                  <p style={{ color: '#8fa4bd', margin: '10px 0 0', fontSize: 14 }}>Read-only diagnostics for the current local development environment.</p>
+                </div>
+                <div style={{ border: '1px solid #245b4c', background: 'rgba(16,185,129,.08)', color: '#6ee7b7', borderRadius: 999, padding: '8px 12px', fontSize: 12, fontWeight: 700 }}>LOCAL CONFIGURATION</div>
               </div>
-              <div>
-                <label style={{ display: 'block', fontSize: '11px', color: '#94a3b8', marginBottom: '6px' }}>BASE STATION HUB COORDINATES</label>
-                <input readOnly value="12.9249° N, 80.1000° E (Tambaram Central Hub, Chennai)" style={{ width: '100%', padding: '8px 10px', backgroundColor: '#121c2e', color: '#38bdf8', border: '1px solid #2a3d5e', borderRadius: '4px', fontFamily: 'monospace', fontSize: '12px' }} />
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 300px), 1fr))', gap: 16 }}>
+                {[
+                  { title: 'Telemetry connection', label: 'WEBSOCKET ENDPOINT', value: telemetrySocketUrl(), note: 'Used for live telemetry updates.' },
+                  { title: 'Operations hub', label: 'INITIAL MAP CENTER', value: '12.9249° N, 80.1000° E', note: 'Tambaram Central Hub, Chennai.' },
+                  { title: 'Connection health', label: 'STALE TELEMETRY THRESHOLD', value: '8 seconds', note: 'Drones without fresh packets are marked offline.' },
+                  { title: 'Map provider', label: 'AVAILABLE BASEMAPS', value: 'Esri World Imagery · OpenStreetMap', note: 'Provider attribution is displayed on the map.' },
+                ].map((item) => (
+                  <section key={item.title} style={{ background: 'linear-gradient(145deg, rgba(20,34,54,.95), rgba(12,22,37,.95))', border: '1px solid #263a53', borderRadius: 12, padding: 20, minWidth: 0, boxShadow: '0 10px 28px rgba(0,0,0,.16)' }}>
+                    <div style={{ color: '#8fa4bd', fontSize: 11, fontWeight: 800, letterSpacing: '.08em', marginBottom: 10 }}>{item.label}</div>
+                    <h2 style={{ fontSize: 16, margin: '0 0 9px', color: '#e8f3ff' }}>{item.title}</h2>
+                    <div style={{ color: '#6ee7f5', fontSize: 13, fontWeight: 650, overflowWrap: 'anywhere' }}>{item.value}</div>
+                    <p style={{ color: '#8fa4bd', fontSize: 13, lineHeight: 1.55, margin: '12px 0 0' }}>{item.note}</p>
+                  </section>
+                ))}
               </div>
-              <div>
-                <label style={{ display: 'block', fontSize: '11px', color: '#94a3b8', marginBottom: '6px' }}>STALE TIMEOUT THRESHOLD</label>
-                <input readOnly value="8000 ms (auto mark OFFLINE)" style={{ width: '100%', padding: '8px 10px', backgroundColor: '#121c2e', color: '#f1f5f9', border: '1px solid #2a3d5e', borderRadius: '4px', fontFamily: 'monospace', fontSize: '12px' }} />
+              <div style={{ marginTop: 18, padding: 16, border: '1px solid #604a25', background: 'rgba(245,158,11,.07)', borderRadius: 10, color: '#d7c19a', fontSize: 13, lineHeight: 1.6 }}>
+                These values describe the current frontend configuration; this page does not change backend settings or issue commands to aircraft.
               </div>
             </div>
           </div>
@@ -614,15 +656,17 @@ export default function App() {
       {showDetailDrawer && selectedDrone && (
         <div style={{
           position: 'absolute',
-          top: 0,
-          right: 0,
-          height: '100%',
-          zIndex: 550,
-          boxShadow: '-10px 0 35px rgba(0, 0, 0, 0.85)',
+          left: 78,
+          top: 68,
+          bottom: 14,
+          height: 'auto',
+          width: 'min(360px, calc(100vw - 100px))',
+          zIndex: 480,
+          boxShadow: '10px 0 35px rgba(0, 0, 0, 0.55)',
         }}>
           <DroneDetailPanel
             drone={selectedDrone}
-            onClose={() => setShowDetailDrawer(false)}
+            onClose={() => { setShowDetailDrawer(false); setSelectedDroneId(null); setActiveRoute(null); }}
             onOpenHistory={(id) => handleOpenHistoryModal(id)}
             onCenterDrone={() => {}}
           />

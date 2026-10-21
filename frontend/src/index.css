@@ -7,11 +7,11 @@
   --bg-panel-elevated: #121c2e;
   --bg-card: #152238;
   --bg-hover: #1c2b46;
-
+  
   --border-subtle: #1e2c44;
   --border-strong: #2a3d5e;
   --border-cyan: rgba(0, 240, 255, 0.4);
-
+  
   --cyan: #00f0ff;
   --cyan-dim: #0ea5e9;
   --green: #10b981;
@@ -21,7 +21,7 @@
   --red: #ef4444;
   --red-dim: #dc2626;
   --purple: #8b5cf6;
-
+  
   --text-main: #f1f5f9;
   --text-muted: #94a3b8;
   --text-dim: #64748b;

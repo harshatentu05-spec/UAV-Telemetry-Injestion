@@ -86,17 +86,17 @@ export default function TacticalMap({
             background: rgba(16, 185, 129, 0.12);
             animation: pulse-ring 3s cubic-bezier(0.215, 0.61, 0.355, 1) infinite;
           "></div>
-
+          
           <!-- Central Hub Icon -->
           <div style="
-            width: 28px;
-            height: 28px;
-            background: #0284c7;
-            border: 2px solid #38bdf8;
-            border-radius: 8px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
+            width: 28px; 
+            height: 28px; 
+            background: #0284c7; 
+            border: 2px solid #38bdf8; 
+            border-radius: 8px; 
+            display: flex; 
+            align-items: center; 
+            justify-content: center; 
             box-shadow: 0 0 16px rgba(56, 189, 248, 0.9);
             color: #ffffff;
             font-weight: 900;
@@ -307,7 +307,7 @@ export default function TacticalMap({
       // Custom Glowing Circular Radar Ring Marker (Reference 2 styling!)
       const customHtml = `
         <div style="position: relative; width: 72px; height: 72px; display: flex; align-items: center; justify-content: center; cursor: pointer;">
-
+          
           <!-- Glowing Outer Radar Patrol Ring (Reference 2) -->
           <div style="
             position: absolute;
@@ -433,8 +433,11 @@ export default function TacticalMap({
       {/* Floating HUD Controls (Positioned cleanly to avoid colliding with any side drawers) */}
       <div style={{
         position: 'absolute',
-        top: 14,
-        right: topRightOffset > 0 ? `${topRightOffset + 14}px` : '18px',
+        top: 64,
+        left: 78,
+        right: topRightOffset > 0 ? `${topRightOffset + 14}px` : '356px',
+        maxWidth: 'calc(100vw - 460px)',
+        flexWrap: 'wrap',
         zIndex: 400,
         display: 'flex',
         alignItems: 'center',
@@ -586,17 +589,21 @@ export default function TacticalMap({
       {/* Tactical Map Legend (Reference 1 Bottom Right) */}
       <div style={{
         position: 'absolute',
-        bottom: 14,
-        right: 14,
+        bottom: 18,
+        left: '50%',
+        transform: 'translateX(-50%)',
+        maxWidth: 'calc(100vw - 120px)',
+        flexWrap: 'wrap',
+        justifyContent: 'center',
         zIndex: 400,
         backgroundColor: 'rgba(9, 13, 22, 0.92)',
         backdropFilter: 'blur(6px)',
         border: '1px solid #1e2c44',
         borderRadius: 4,
-        padding: '6px 14px',
+        padding: '7px 12px',
         display: 'flex',
         alignItems: 'center',
-        gap: 16,
+        gap: 12,
         fontFamily: 'monospace',
         fontSize: '10px',
         color: '#94a3b8',
